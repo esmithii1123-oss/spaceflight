@@ -51,6 +51,7 @@ All parameters are editable from the indicator's settings dialog:
 | Strictness: min depth vs baseline | 0.5 | A level must hold at least this fraction of the baseline reference size to be confirmed real. Until the baseline is primed this gate passes and persistence/jitter do the filtering. |
 | Clarity: fade half-life (sec) | 12 | How slowly broken levels dim away. Larger keeps pull-outs visible longer. |
 | Clarity: fade floor | 0.05 | Strength below which a fading level disappears entirely. |
+| (price conversion) | via InstrumentInfo.pips | Automatic. pips is the raw-price tick size (0.25 for MNQ/ES, 1.0 for YM), verified against the official DemoStrategies trading helpers; unit-tested in TickMathTest. |
 | Rolling window half-life (updates) | 20 | Decay speed of all statistics (baseline, depth averages). |
 | Min samples before promotion | 24 | Updates a level needs before its stability statistics are trusted for promotion. Prevents early low-jitter misreads of flickering quotes. |
 | Session open hour / minute | 9 / 30 | Exchange-timezone session open used to build the pre-market baseline. Rolls forward automatically each day; overnight activity re-primes the baseline. |

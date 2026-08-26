@@ -105,7 +105,7 @@ public class RealLiquidityLadder implements CustomModule, DepthDataListener, Tra
     private static final long MARKER_LOG_TTL_MILLIS = 60_000L;
 
     private InstrumentInfo instrument;
-    private int pipsPerTick = 1;
+    private double pipsPerTick = 1.0;
     private String alias;
     private long now;
     private long openTimeMillis;
@@ -127,7 +127,7 @@ public class RealLiquidityLadder implements CustomModule, DepthDataListener, Tra
     public void initialize(String alias, InstrumentInfo info, Api api, InitialState initialState) {
         this.alias = alias;
         this.instrument = info;
-        this.pipsPerTick = Math.max(1, (int) info.pips);
+        this.pipsPerTick = Math.max(1e-9, instrument.pips); // double: 0.25 for MNQ/ES, 1.0 for YM
         this.now = initialState.getCurrentTime() > 0 ? initialState.getCurrentTime() : System.currentTimeMillis();
         this.openTimeMillis = PreMarketBaseline.sessionOpenFor(now, openHour.intValue(), openMinute.intValue());
         this.lastStampMillis.clear();
@@ -214,8 +214,7 @@ public class RealLiquidityLadder implements CustomModule, DepthDataListener, Tra
 
     /** Raw price in currency units -> integer price-tick index used by the ladder. */
     private int priceToTick(double priceUnits) {
-        double unitsPerTick = Math.max(1e-9, instrument.pips); // tick size in raw price units
-        return (int) Math.round(priceUnits / unitsPerTick);
+        return TickMath.priceToTick(priceUnits, pipsPerTick);
     }
 
     /** Stamps fade markers with dedupe: one per break, refreshed at most every N ms while fading. */
@@ -230,7 +229,9 @@ public class RealLiquidityLadder implements CustomModule, DepthDataListener, Tra
                 long last = lastStampMillis.getOrDefault(level.price(), Long.MIN_VALUE);
                 if (now - last >= markerRefreshMillis) {
                     lastStampMillis.put(level.price(), now);
-                    breakMarkers.addIcon(level.price(), fadedIcon(strength), 0, 0);
+                    // PRIMARY graphs render in raw price units; ladder stores tick indices.
+                    double rawPrice = TickMath.tickToPrice(level.price(), pipsPerTick);
+                    breakMarkers.addIcon(rawPrice, fadedIcon(strength), 0, 0);
                 }
             }
         }
