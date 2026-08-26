@@ -91,30 +91,6 @@ public class RealLiquidityLadder implements CustomModule, DepthDataListener, Tra
     @Parameter(name = "Session open minute", reloadOnChange = true)
     private Integer openMinute = 30;
 
-    // ------------------------------------------------------------------
-    // Volume Pressure (spaceflight MP-style, hardened). Modes:
-    // 0 = off, 1 = SPLIT (buy%/sell% lines), 2 = NET (one net-delta line),
-    // 3 = BOTH.
-    // ------------------------------------------------------------------
-    @Parameter(name = "Volume Pressure mode (0 off/1 split/2 net/3 both)", reloadOnChange = true)
-    private Integer volumePressureMode = 0;
-
-    /** Flow memory: EW half-life of traded-volume sums, seconds. */
-    @Parameter(name = "Volume Pressure half-life (sec)", reloadOnChange = true)
-    private Integer volumePressureHalfLifeSec = 60;
-
-    /** Reference quantile used as the 100% scale (robust; NOT a sticky max). */
-    @Parameter(name = "Volume Pressure scale quantile", reloadOnChange = true)
-    private Double volumePressureScaleQuantile = 0.75;
-
-    /** Ladder-aware absorption detection at confirmed STRONG levels. */
-    @Parameter(name = "Absorption at levels: track", reloadOnChange = true)
-    private Boolean absorptionTracking = true;
-
-    /** Churn (as fraction of the level's resting size) that raises the absorption flag. */
-    @Parameter(name = "Absorption threshold (fraction of level size)", reloadOnChange = true)
-    private Double absorptionThresholdFrac = 0.5;
-
     @Parameter(name = "Show break/fade markers", reloadOnChange = true)
     private Boolean showMarkers = true;
 
@@ -143,13 +119,6 @@ public class RealLiquidityLadder implements CustomModule, DepthDataListener, Tra
     private Indicator bidStrength;
     private Indicator askStrength;
     private Indicator breakMarkers;
-
-    // Volume-pressure outputs (nullable by mode).
-    private Indicator vpBuyLine;      // "SF: VP Buy %"      (SPLIT/BOTH)
-    private Indicator vpSellLine;     // "SF: VP Sell %"     (SPLIT/BOTH)
-    private Indicator vpNetLine;      // "SF: VP Net [-1..1]" (NET/BOTH)
-    private Indicator vpAbsorbLine;   // "SF: Levels absorbing" count
-    private Indicator absorptionMarkers; // PRIMARY graph stamps when a level starts absorbing
 
     /** side+priceTick -> last stamp time; deduplicates fade markers and expires old entries.
      *  Key encodes the side because a bid and an ask can share a price tick. */
@@ -182,45 +151,7 @@ public class RealLiquidityLadder implements CustomModule, DepthDataListener, Tra
             breakMarkers = null;
         }
 
-        // Volume-pressure sub-chart lines (registered per mode; null when unused).
-        VolumePressureEngine.Mode vpMode = volumePressureMode();
-        if (vpMode == VolumePressureEngine.Mode.SPLIT || vpMode == VolumePressureEngine.Mode.BOTH) {
-            vpBuyLine = api.registerIndicator("SF: VP Buy %", GraphType.BOTTOM);
-            vpBuyLine.setColor(new Color(80, 200, 120));
-            vpSellLine = api.registerIndicator("SF: VP Sell %", GraphType.BOTTOM);
-            vpSellLine.setColor(new Color(220, 90, 90));
-        } else {
-            vpBuyLine = vpSellLine = null;
-        }
-        if (vpMode == VolumePressureEngine.Mode.NET || vpMode == VolumePressureEngine.Mode.BOTH) {
-            vpNetLine = api.registerIndicator("SF: VP Net", GraphType.BOTTOM);
-            vpNetLine.setColor(Color.CYAN);
-        } else {
-            vpNetLine = null;
-        }
-        if (vpMode != null && Boolean.TRUE.equals(absorptionTracking)) {
-            vpAbsorbLine = api.registerIndicator("SF: Levels absorbing", GraphType.BOTTOM);
-            vpAbsorbLine.setColor(Color.MAGENTA);
-            if (Boolean.TRUE.equals(showMarkers)) {
-                absorptionMarkers = api.registerIndicator("SF: Absorption markers", GraphType.PRIMARY);
-                absorptionMarkers.setColor(Color.MAGENTA);
-            } else {
-                absorptionMarkers = null;
-            }
-        } else {
-            vpAbsorbLine = null;
-            absorptionMarkers = null;
-        }
-    }
-
-    private VolumePressureEngine.Mode volumePressureMode() {
-        int m = volumePressureMode == null ? 0 : volumePressureMode;
-        return switch (Math.max(0, Math.min(3, m))) {
-            case 1 -> VolumePressureEngine.Mode.SPLIT;
-            case 2 -> VolumePressureEngine.Mode.NET;
-            case 3 -> VolumePressureEngine.Mode.BOTH;
-            default -> null; // OFF
-        };
+;
     }
 
     private void rebuildEngine() {
@@ -250,35 +181,9 @@ public class RealLiquidityLadder implements CustomModule, DepthDataListener, Tra
                 levelsPerSide, minPromotionSamples, sink);
         engine = new RealLiquidityEngine(params, baseline);
 
-        // Volume-pressure stack is rebuilt together with the ladder engine (parameter-driven).
-        // Transient flow history is intentionally reset here: unlike the baseline these windows
-        // are short (seconds-scale half-lives), so re-priming costs ~a few warmup samples.
-        VolumePressureEngine.Mode vpMode = volumePressureMode();
-        if (vpMode != null) {
-            double hl = Math.max(1, volumePressureHalfLifeSec);
-            double q = volumePressureScaleQuantile == null ? 0.75
-                    : Math.max(0.05, Math.min(1.0, volumePressureScaleQuantile));
-            pressureEngine = new VolumePressureEngine(
-                    new VolumePressureEngine.Params(hl, vpMode, q, 40, 2048));
-        } else {
-            pressureEngine = null;
-        }
-        boolean absorb = pressureEngine != null && Boolean.TRUE.equals(absorptionTracking);
-        if (absorb) {
-            double thr = absorptionThresholdFrac == null ? 0.5
-                    : Math.max(0.05, Math.min(2.0, absorptionThresholdFrac));
-            levelMeter = new LevelPressureMeter(new LevelPressureMeter.Params(
-                    20.0, 3, thr, thr / 4));
-        } else {
-            levelMeter = null;
-        }
-        absorptionStampMillis.clear();
     }
 
-    private VolumePressureEngine pressureEngine;
-    private LevelPressureMeter levelMeter;
-    /** side+priceTick -> millis when its CURRENT absorption streak was first stamped. */
-    private final java.util.Map<Long, Long> absorptionStampMillis = new java.util.HashMap<>();
+
 
     @Override
     public void onDepth(boolean isBid, int priceInTicks, int size) {
@@ -287,15 +192,7 @@ public class RealLiquidityLadder implements CustomModule, DepthDataListener, Tra
 
     @Override
     public void onTrade(double priceInUnits, int size, TradeInfo tradeInfo) {
-        int fillTick = priceToTick(priceInUnits);
-        engine.onTrade(now, fillTick);
-        if (pressureEngine != null && tradeInfo != null) {
-            boolean bidAggressor = tradeInfo.isBidAggressor;
-            pressureEngine.onTrade(now, bidAggressor, size);
-            if (levelMeter != null) {
-                levelMeter.onFill(now, fillTick, bidAggressor, size);
-            }
-        }
+        engine.onTrade(now, priceToTick(priceInUnits));
     }
 
     @Override
@@ -318,83 +215,6 @@ public class RealLiquidityLadder implements CustomModule, DepthDataListener, Tra
         bidStrength.addPoint(engine.sideStrengthIndex(now, true));
         askStrength.addPoint(engine.sideStrengthIndex(now, false));
         stampFadingMarkers();
-        sampleVolumePressure();
-    }
-
-    /**
-     * One volume-pressure sampling tick: refresh the ladder's strong-level set for the
-     * absorption meter, take an engine snapshot into the sub-chart lines, and detect
-     * newly-absorbing levels (CSV + PRIMARY-graph stamp on each fresh flag raise).
-     */
-    private void sampleVolumePressure() {
-        if (pressureEngine == null) {
-            return;
-        }
-        List<RealLiquidityEngine.ScoredLevel> bidPool = engine.visibleLevelsScored(now, true);
-        List<RealLiquidityEngine.ScoredLevel> askPool = engine.visibleLevelsScored(now, false);
-
-        if (levelMeter != null) {
-            java.util.List<LevelPressureMeter.StrongLevel> strong = new ArrayList<>();
-            collectStrong(bidPool, strong);
-            collectStrong(askPool, strong);
-            levelMeter.observeStrongLevels(now, strong);
-        }
-
-        VolumePressureEngine.Snapshot snap = pressureEngine.sample(now);
-        if (snap.primed()) {
-            if (vpBuyLine != null && Double.isFinite(snap.buyPercent())) vpBuyLine.addPoint(snap.buyPercent());
-            if (vpSellLine != null && Double.isFinite(snap.sellPercent())) vpSellLine.addPoint(snap.sellPercent());
-            if (vpNetLine != null && Double.isFinite(snap.net())) vpNetLine.addPoint(snap.net());
-        }
-
-        if (levelMeter == null) {
-            return;
-        }
-        int absorbing = 0;
-        for (LevelPressureMeter.AbsorptionState st : levelMeter.poll(now)) {
-            Long key = stampKey(st.bidSide(), st.priceTick());
-            long prev = absorptionStampMillis.getOrDefault(key, Long.MIN_VALUE);
-            if (!st.absorbing()) {
-                if (prev != Long.MIN_VALUE) {
-                    absorptionStampMillis.remove(key);
-                    if (Boolean.TRUE.equals(logTransitionsToCsv)) {
-                        appendCsvLine(now, "%s,%d,%s,%s,%s,%d,%.3f,%.3f".formatted(
-                                st.bidSide() ? "BID" : "ASK", st.priceTick(),
-                                "ABSORPTION", "", "", 0, 0.0, st.churnFrac()));
-                    }
-                }
-                continue;
-            }
-            absorbing++;
-            if (prev == Long.MIN_VALUE) {
-                // Fresh flag raise: log it and stamp once on the primary graph.
-                absorptionStampMillis.put(key, now);
-                if (Boolean.TRUE.equals(logTransitionsToCsv)) {
-                    appendCsvLine(now, "%s,%d,%s,%s,%s,%d,%.3f,%.3f".formatted(
-                            st.bidSide() ? "BID" : "ASK", st.priceTick(),
-                            "ABSORPTION_START", "STRONG", "ABSORBING",
-                            0, 0.0, st.churnFrac()));
-                }
-                if (absorptionMarkers != null) {
-                    double rawPrice = TickMath.tickToPrice(st.priceTick(), pipsPerTick);
-                    absorptionMarkers.addIcon(rawPrice,
-                            fadedIcon(Math.min(1.0, st.churnFrac())), 0, 0);
-                }
-            }
-        }
-        if (vpAbsorbLine != null) {
-            vpAbsorbLine.addPoint(absorbing);
-        }
-    }
-
-    private static void collectStrong(List<RealLiquidityEngine.ScoredLevel> pool,
-                                      List<LevelPressureMeter.StrongLevel> out) {
-        for (RealLiquidityEngine.ScoredLevel sl : pool) {
-            LiquidityLevel l = sl.level();
-            if (l.state() == LiquidityLevel.State.STRONG && l.lastSize() > 0) {
-                out.add(new LevelPressureMeter.StrongLevel(l.isBidSide(), l.price(), l.lastSize()));
-            }
-        }
     }
 
     /**
