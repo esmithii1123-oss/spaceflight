@@ -79,8 +79,9 @@ public final class PreMarketBaseline {
 
     /**
      * Normalizes an observed level size into [0,1] strength relative to the rolling baseline
-     * for that side. Sizes at/above 1.5x the reference map to full strength; sizes below 50%
-     * of the reference map to zero.
+     * for that side. Scales linearly with size: sizes at/above 1.5x the reference map to full
+     * strength (1.0); size 0 maps to 0. The promotion depth gate in the engine decides what
+     * fraction of this scale counts as "meaningful".
      */
     public double normalize(boolean bidSide, double size) {
         double ref = referenceSize(bidSide);

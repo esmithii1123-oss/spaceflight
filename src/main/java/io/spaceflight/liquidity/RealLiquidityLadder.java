@@ -55,9 +55,9 @@ public class RealLiquidityLadder implements CustomModule, DepthDataListener, Tra
     @Parameter(name = "Number of levels per side", reloadOnChange = true)
     private Integer levelsPerSide = 3;
 
-    /** Strictness: minimum time in milliseconds a quote must persist to count as real. */
-    @Parameter(name = "Strictness: persistence (ms)", reloadOnChange = true)
-    private Integer strictnessPersistenceMillis = 3_000;
+    /** Strictness: minimum time in SECONDS a quote must persist to count as real (min 1). */
+    @Parameter(name = "Strictness: persistence (sec)", reloadOnChange = true)
+    private Integer strictnessPersistenceSec = 3;
 
     /** Strictness: jitter cap. Higher algo noise tolerance = looser filtering. */
     @Parameter(name = "Strictness: max relative jitter", reloadOnChange = true)
@@ -110,13 +110,17 @@ public class RealLiquidityLadder implements CustomModule, DepthDataListener, Tra
     private boolean promotedBaselineReadyLogged;
     private RealLiquidityEngine engine;
     private PreMarketBaseline baseline;
+    /** Half-life the current baseline was built with, so tuning other settings mid-session
+     *  keeps the accumulated baseline and only a genuine half-life change rebuilds it. */
+    private Double baselineBuiltWithHalfLife;
 
     private Indicator bidStrength;
     private Indicator askStrength;
     private Indicator breakMarkers;
 
-    /** priceTick -> last stamp time; deduplicates fade markers and expires old entries. */
-    private final java.util.Map<Integer, Long> lastStampMillis = new java.util.HashMap<>();
+    /** side+priceTick -> last stamp time; deduplicates fade markers and expires old entries.
+     *  Key encodes the side because a bid and an ask can share a price tick. */
+    private final java.util.Map<Long, Long> lastStampMillis = new java.util.HashMap<>();
 
     /** Lazily-opened CSV writer for calibration mode. */
     private Path csvFile;
@@ -147,13 +151,28 @@ public class RealLiquidityLadder implements CustomModule, DepthDataListener, Tra
     }
 
     private void rebuildEngine() {
-        baseline = new PreMarketBaseline(now, openTimeMillis, rollingHalfLifeUpdates);
+        // Keep the accumulated decayed windows across parameter reloads (any settings change
+        // re-invokes this) unless the half-life itself changed — rebuilding the DecayWindows
+        // with a different alpha makes the old samples incoherent anyway.
+        if (baseline == null || baselineBuiltWithHalfLife == null
+                || !baselineBuiltWithHalfLife.equals((double) rollingHalfLifeUpdates)) {
+            baseline = new PreMarketBaseline(now, openTimeMillis, rollingHalfLifeUpdates);
+            baselineBuiltWithHalfLife = (double) rollingHalfLifeUpdates;
+            lastStampMillis.clear();
+        } else {
+            // Same windows: adopt the current boundary (re-init may carry a new open time).
+            baseline.rollSessionWindowTo(openTimeMillis, now);
+        }
+        promotedBaselineReadyLogged = false;
 
         java.util.function.Consumer<RealLiquidityEngine.LiquidityEvent> sink =
                 Boolean.TRUE.equals(logTransitionsToCsv) ? ev -> appendCsv(ev) : null;
 
+        // Clamp to >= 1s so a 0/negative UI input can never disable the time gate and
+        // collapse the abandoned-level sweep window to ~0.
+        long minPersistenceMillis = Math.max(1, strictnessPersistenceSec) * 1_000L;
         RealLiquidityEngine.EngineParams params = new RealLiquidityEngine.EngineParams(
-                rollingHalfLifeUpdates, strictnessPersistenceMillis, strictnessMinDepth,
+                rollingHalfLifeUpdates, minPersistenceMillis, strictnessMinDepth,
                 strictnessMaxJitter, clarityFadeHalfLifeSec * 1000d, clarityFadeFloor,
                 levelsPerSide, minPromotionSamples, sink);
         engine = new RealLiquidityEngine(params, baseline);
@@ -225,16 +244,20 @@ public class RealLiquidityLadder implements CustomModule, DepthDataListener, Tra
                 LiquidityLevel level = sl.level();
                 double strength = sl.displayedStrength();
                 if (strength <= 0 || level.state() != LiquidityLevel.State.FADING) continue;
-                long last = lastStampMillis.getOrDefault(level.price(), Long.MIN_VALUE);
+                long last = lastStampMillis.getOrDefault(stampKey(bidSide, level.price()), Long.MIN_VALUE);
                 long refresh = Math.max(1_000, markerRefreshMillis); // guard against 0/negative UI input
                 if (now - last >= refresh) {
-                    lastStampMillis.put(level.price(), now);
+                    lastStampMillis.put(stampKey(bidSide, level.price()), now);
                     // PRIMARY graphs render in raw price units; ladder stores tick indices.
                     double rawPrice = TickMath.tickToPrice(level.price(), pipsPerTick);
                     breakMarkers.addIcon(rawPrice, fadedIcon(strength), 0, 0);
                 }
             }
         }
+    }
+
+    private static long stampKey(boolean bidSide, int priceTick) {
+        return ((long) (bidSide ? 1 : 0) << 32) | (priceTick & 0xFFFFFFFFL);
     }
 
     private java.util.List<RealLiquidityEngine.ScoredLevel> fadingScored(boolean bidSide) {
