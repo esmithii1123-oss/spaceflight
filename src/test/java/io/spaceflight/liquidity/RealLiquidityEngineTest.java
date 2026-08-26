@@ -159,4 +159,23 @@ class RealLiquidityEngineTest {
         assertEquals(0.0, e.largestRestingSize(true),
                 "broken level's stale size must not feed the baseline");
     }
+
+    @Test
+    void fadeIsMonotonicEvenWhileZerosStreamInAfterBreak() {
+        RealLiquidityEngine e = engine();
+        long t = 0;
+        for (int i = 0; i < 30; i++) { e.onDepth(t, true, 21_000, 400); t += 1_000; }
+        e.onTrade(t, 20_999);
+
+        // Post-break: size 0 keeps arriving at the broken level (as Bookmap sends on removal).
+        double prev = e.visibleLevels(t, true).get(0).strength(t);
+        for (int i = 1; i <= 40; i++) {
+            long now = t + i * 500;
+            e.onDepth(now, true, 21_000, 0); // decayed mean keeps sliding toward 0
+            double s = e.visibleLevels(now, true).isEmpty()
+                    ? 0.0 : e.visibleLevels(now, true).get(0).strength(now);
+            assertTrue(s <= prev + 1e-9, "strength must never jump back up mid-fade (flicker)");
+            prev = s;
+        }
+    }
 }

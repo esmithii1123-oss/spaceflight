@@ -11,7 +11,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.time.Instant;
-import java.time.ZoneId;
 
 import velox.api.layer1.annotations.Layer1ApiVersion;
 import velox.api.layer1.annotations.Layer1ApiVersionValue;
@@ -101,7 +100,6 @@ public class RealLiquidityLadder implements CustomModule, DepthDataListener, Tra
     @Parameter(name = "Log transitions to CSV (calibration)", reloadOnChange = true)
     private Boolean logTransitionsToCsv = false;
 
-    private static final ZoneId EXCHANGE_TZ = ZoneId.of("America/New_York");
     private static final long MARKER_LOG_TTL_MILLIS = 60_000L;
 
     private InstrumentInfo instrument;
@@ -201,7 +199,9 @@ public class RealLiquidityLadder implements CustomModule, DepthDataListener, Tra
     private void rollSessionWindowIfNeeded() {
         long todaysOpen = PreMarketBaseline.sessionOpenOfDate(now,
                 openHour.intValue(), openMinute.intValue());
-        if (todaysOpen != openTimeMillis) {
+        // Adopt only forward-consistent boundaries: on a backward replay seek the baseline
+        // rejects the roll, and the module must not desync from it.
+        if (todaysOpen > openTimeMillis) {
             baseline.rollSessionWindowTo(todaysOpen, now);
             openTimeMillis = todaysOpen;
         }

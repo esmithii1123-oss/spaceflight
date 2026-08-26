@@ -36,6 +36,7 @@ public final class LiquidityLevel {
     private State state = State.BUILDING;
     private long firstSeenMillis = Long.MIN_VALUE;
     private long brokenAtMillis = Long.MIN_VALUE;
+    private double stabilityAtBreak = Double.NaN;
     private int lastSize;
 
     public LiquidityLevel(int price, boolean bidSide, Config cfg) {
@@ -91,8 +92,12 @@ public final class LiquidityLevel {
     /** Marks the level as traded-through. Repeated calls are harmless. */
     public void breakLevel(long nowMillis) {
         if (state == State.BUILDING || state == State.STRONG || state == State.BROKEN) {
-            state = State.FADING;
-            brokenAtMillis = nowMillis;
+            // Freeze quote stability at break time: the post-break zeros that stream into the
+            // size window must NOT change the fade curve, otherwise displayed strength would
+            // be non-monotonic — exactly the flicker this indicator forbids.
+            this.stabilityAtBreak = stabilityScore();
+            this.state = State.FADING;
+            this.brokenAtMillis = nowMillis;
         }
     }
 
@@ -113,7 +118,8 @@ public final class LiquidityLevel {
                 if (brokenAtMillis == Long.MIN_VALUE) yield 0.0;
                 double elapsed = Math.max(0, nowMillis - brokenAtMillis);
                 double remaining = Math.pow(0.5, elapsed / cfg.fadeHalfLifeMillis());
-                yield Math.max(0, remaining * stabilityScore());
+                double stability = Double.isNaN(stabilityAtBreak) ? 0.05 : stabilityAtBreak;
+                yield Math.max(0, remaining * stability);
             }
         };
     }
