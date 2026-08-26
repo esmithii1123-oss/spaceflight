@@ -107,4 +107,19 @@ public final class PreMarketBaseline {
     public static long sessionOpenFor(long nowMillis, int hour, int minute) {
         return sessionOpenFor(nowMillis, hour, minute, ZoneId.of("America/New_York"));
     }
+
+    /**
+     * Open timestamp of the ET-date containing {@code nowMillis}, regardless of whether that
+     * open has passed. This is the correct session boundary for the rolling baseline:
+     * before today's open it defines the pre-market window; after it, the open session.
+     * (Using "next upcoming open" here would flip the session closed one minute after open.)
+     */
+    public static long sessionOpenOfDate(long nowMillis, int hour, int minute, ZoneId tz) {
+        return Instant.ofEpochMilli(nowMillis).atZone(tz).toLocalDate()
+                .atTime(hour, minute).atZone(tz).toInstant().toEpochMilli();
+    }
+
+    public static long sessionOpenOfDate(long nowMillis, int hour, int minute) {
+        return sessionOpenOfDate(nowMillis, hour, minute, ZoneId.of("America/New_York"));
+    }
 }

@@ -128,6 +128,16 @@ public final class LiquidityLevel {
         return state == State.FADING && strength(nowMillis) <= cfg.fadeFloor();
     }
 
+    /**
+     * True when a still-unconfirmed level has been stale (resting size 0) for far longer than
+     * the persistence floor — a stray algo quote's price that will never promote. These must
+     * be swept or the ladder grows without bound over a session.
+     */
+    public boolean isAbandoned(long nowMillis) {
+        return state == State.BUILDING && lastSize == 0
+                && persistence(nowMillis) > 10 * cfg.minPersistenceMillis();
+    }
+
     public State state() {
         return state;
     }

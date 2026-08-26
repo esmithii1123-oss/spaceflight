@@ -59,7 +59,7 @@ public final class RealLiquidityEngine {
         this.baseline = baseline;
         this.maxLevelsPerSide = params.maxLevelsPerSide();
         this.minPersistenceMillis = params.minPersistenceMillis();
-        this.minRelativeDepth = params.minRelativeDepth();
+        this.minRelativeDepth = Math.max(0.0, Math.min(1.0, params.minRelativeDepth()));
         this.maxRelativeJitter = params.maxRelativeJitter();
         this.minPromotionSamples = Math.max(8, params.minPromotionSamples());
         this.eventSink = params.eventSink();
@@ -152,8 +152,8 @@ public final class RealLiquidityEngine {
     }
 
     private void sweepExpired(long nowMillis) {
-        bids.values().removeIf(l -> l.isExpired(nowMillis));
-        asks.values().removeIf(l -> l.isExpired(nowMillis));
+        bids.values().removeIf(l -> l.isExpired(nowMillis) || l.isAbandoned(nowMillis));
+        asks.values().removeIf(l -> l.isExpired(nowMillis) || l.isAbandoned(nowMillis));
     }
 
     /** Number of tracked levels for a side (including fading ones). */
@@ -161,9 +161,12 @@ public final class RealLiquidityEngine {
         return side(bidSide).size();
     }
 
-    /** Strongest resting size currently tracked on a side (0 if none) — feeds the baseline. */
+    /** Strongest resting size currently tracked on a side (0 if none) — feeds the baseline.
+     *  FADING levels are excluded: their size field is stale after the break and must not
+     *  pollute the rolling baseline reference. */
     public double largestRestingSize(boolean bidSide) {
         return side(bidSide).values().stream()
+                .filter(l -> l.state() != LiquidityLevel.State.FADING)
                 .mapToInt(LiquidityLevel::lastSize)
                 .filter(s -> s > 0)
                 .max().orElse(0);
@@ -202,13 +205,6 @@ public final class RealLiquidityEngine {
         }
         pool.sort(Comparator.comparingDouble((ScoredLevel sl) -> sl.displayedStrength()).reversed());
         return pool;
-    }
-
-    /** Maximum remaining strength of any fading level on a side, or -1 if none. */
-    public double strongestFadingStrength(long nowMillis, int priceTick) {
-        LiquidityLevel l = bids.get(priceTick);
-        if (l == null) l = asks.get(priceTick);
-        return l == null ? -1 : l.strength(nowMillis);
     }
 
     /**

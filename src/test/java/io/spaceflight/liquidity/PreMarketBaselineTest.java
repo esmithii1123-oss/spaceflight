@@ -56,6 +56,27 @@ class PreMarketBaselineTest {
         assertTrue(open - ts.millis <= java.time.Duration.ofDays(1).plusHours(4).toMillis());
     }
 
+    @Test
+    void sessionOpenOfDatePinsTodaysBoundaryBothSidesOfTheOpen() {
+        // 08:00 ET (13:00Z) on 2026-03-04 -> today's 09:30 open, not yet passed.
+        long preOpen = RealLiquidityLadderEquivalent.instant("2026-03-04T13:00:00Z");
+        long openAt930 = PreMarketBaseline.sessionOpenOfDate(preOpen, 9, 30);
+        assertTrue(openAt930 > preOpen, "before the open, boundary must be in the future");
+
+        // 11:00 ET (16:00Z) same date -> same boundary, already passed (session is open).
+        long inSession = RealLiquidityLadderEquivalent.instant("2026-03-04T16:00:00Z");
+        assertEquals(openAt930, PreMarketBaseline.sessionOpenOfDate(inSession, 9, 30),
+                "boundary must NOT jump to tomorrow while today's session runs");
+        assertTrue(inSession >= openAt930);
+    }
+
+    /** Small local helper so this test file stays free of heavy time APIs. */
+    private static final class RealLiquidityLadderEquivalent {
+        static long instant(String iso) {
+            return java.time.Instant.parse(iso).toEpochMilli();
+        }
+    }
+
     /** Tiny helper so tests avoid pulling heavy time APIs everywhere. */
     private static final class ZonedInstant {
         final long millis;

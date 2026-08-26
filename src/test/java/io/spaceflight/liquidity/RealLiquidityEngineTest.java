@@ -138,4 +138,25 @@ class RealLiquidityEngineTest {
         assertEquals(RealLiquidityEngine.ScoredLevel.class.getSimpleName(),
                 RealLiquidityEngine.ScoredLevel.class.getSimpleName()); // shape guard
     }
+
+    @Test
+    void abandonedBuildingLevelsAreSweptToBoundMemory() {
+        RealLiquidityEngine e = engine();
+        long t = 0;
+        e.onDepth(t, true, 21_000, 500);       // stray algo quote
+        e.onDepth(t + 1_000, true, 21_000, 0); // gone
+        long later = t + 10 * 3_000 + 1;       // far past 10x persistence floor
+        e.onDepth(later, false, 21_050, 100);  // poke the sweep
+        assertEquals(0, e.trackedCount(true), "stale BUILDING price must not accumulate");
+    }
+
+    @Test
+    void fadingLevelsDoNotPolluteBaselineReference() {
+        RealLiquidityEngine e = engine();
+        long t = 0;
+        for (int i = 0; i < 30; i++) { e.onDepth(t, true, 21_000, 400); t += 1_000; }
+        e.onTrade(t, 20_999); // break -> FADING
+        assertEquals(0.0, e.largestRestingSize(true),
+                "broken level's stale size must not feed the baseline");
+    }
 }

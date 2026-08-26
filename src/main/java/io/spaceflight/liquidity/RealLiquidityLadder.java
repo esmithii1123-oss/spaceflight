@@ -129,12 +129,12 @@ public class RealLiquidityLadder implements CustomModule, DepthDataListener, Tra
         this.instrument = info;
         this.pipsPerTick = Math.max(1e-9, instrument.pips); // double: 0.25 for MNQ/ES, 1.0 for YM
         this.now = initialState.getCurrentTime() > 0 ? initialState.getCurrentTime() : System.currentTimeMillis();
-        this.openTimeMillis = PreMarketBaseline.sessionOpenFor(now, openHour.intValue(), openMinute.intValue());
+        this.openTimeMillis = PreMarketBaseline.sessionOpenOfDate(now, openHour.intValue(), openMinute.intValue());
         this.lastStampMillis.clear();
         this.promotedBaselineReadyLogged = false;
         this.csvFile = null;
 
-        rebuildEngine(api);
+        rebuildEngine();
 
         bidStrength = api.registerIndicator("SF: Bid real-liquidity strength", GraphType.BOTTOM);
         bidStrength.setColor(Color.GREEN);
@@ -148,7 +148,7 @@ public class RealLiquidityLadder implements CustomModule, DepthDataListener, Tra
         }
     }
 
-    private void rebuildEngine(Api api) {
+    private void rebuildEngine() {
         baseline = new PreMarketBaseline(now, openTimeMillis, rollingHalfLifeUpdates);
 
         java.util.function.Consumer<RealLiquidityEngine.LiquidityEvent> sink =
@@ -194,17 +194,16 @@ public class RealLiquidityLadder implements CustomModule, DepthDataListener, Tra
     }
 
     /**
-     * Detects that the current open boundary belongs to a previous day and rolls the module
-     * + baseline onto the next session. Pre-open of the new day then re-primes the baseline.
+     * Keeps the boundary pinned to the open of the current ET date. Before today's open the
+     * baseline is in pre-open accumulation; after it, the session is open. Crosses exactly at
+     * midnight ET, not one minute after the open.
      */
     private void rollSessionWindowIfNeeded() {
-        long nextOpen = PreMarketBaseline.sessionOpenFor(now, openHour.intValue(), openMinute.intValue());
-        if (nextOpen != openTimeMillis && nextOpen > openTimeMillis) {
-            long candidate = nextOpen;
-            // Only roll when we are genuinely between sessions: after today's open has passed,
-            // sessionOpenFor already returns tomorrow's open, so adoption is always correct.
-            baseline.rollSessionWindowTo(candidate, now);
-            openTimeMillis = candidate;
+        long todaysOpen = PreMarketBaseline.sessionOpenOfDate(now,
+                openHour.intValue(), openMinute.intValue());
+        if (todaysOpen != openTimeMillis) {
+            baseline.rollSessionWindowTo(todaysOpen, now);
+            openTimeMillis = todaysOpen;
         }
     }
 
@@ -227,7 +226,8 @@ public class RealLiquidityLadder implements CustomModule, DepthDataListener, Tra
                 double strength = sl.displayedStrength();
                 if (strength <= 0 || level.state() != LiquidityLevel.State.FADING) continue;
                 long last = lastStampMillis.getOrDefault(level.price(), Long.MIN_VALUE);
-                if (now - last >= markerRefreshMillis) {
+                long refresh = Math.max(1_000, markerRefreshMillis); // guard against 0/negative UI input
+                if (now - last >= refresh) {
                     lastStampMillis.put(level.price(), now);
                     // PRIMARY graphs render in raw price units; ladder stores tick indices.
                     double rawPrice = TickMath.tickToPrice(level.price(), pipsPerTick);
