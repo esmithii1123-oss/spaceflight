@@ -6,7 +6,8 @@ import java.awt.Graphics2D;
 import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;import java.nio.file.Files;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.time.Instant;
@@ -27,8 +28,6 @@ import velox.api.layer1.simplified.Parameter;
 import velox.api.layer1.simplified.TimeListener;
 import velox.api.layer1.simplified.TradeDataListener;
 
-import java.util.ArrayList;
-import java.util.List;
 
 /**
  * spaceflight — Real Liquidity Ladder.
@@ -150,8 +149,6 @@ public class RealLiquidityLadder implements CustomModule, DepthDataListener, Tra
         } else {
             breakMarkers = null;
         }
-
-;
     }
 
     private void rebuildEngine() {
@@ -180,10 +177,7 @@ public class RealLiquidityLadder implements CustomModule, DepthDataListener, Tra
                 strictnessMaxJitter, clarityFadeHalfLifeSec * 1000d, clarityFadeFloor,
                 levelsPerSide, minPromotionSamples, sink);
         engine = new RealLiquidityEngine(params, baseline);
-
     }
-
-
 
     @Override
     public void onDepth(boolean isBid, int priceInTicks, int size) {
