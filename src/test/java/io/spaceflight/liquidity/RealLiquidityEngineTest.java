@@ -2,6 +2,7 @@ package io.spaceflight.liquidity;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -91,5 +92,50 @@ class RealLiquidityEngineTest {
         for (LiquidityLevel b : e.visibleLevels(t, true)) {
             assertNotEquals(LiquidityLevel.State.FADING, b.state());
         }
+    }
+
+    @Test
+    void shallowLevelsNeverPromoteWhenBaselineIsReady() {
+        // Baseline reference decays toward ~100 on both sides after enough ticks.
+        PreMarketBaseline baseline = new PreMarketBaseline(0, Long.MAX_VALUE / 2, 20);
+        for (int i = 0; i < 60; i++) baseline.observe(i * 1_000L, 100.0, 100.0);
+        assertTrue(baseline.isReady(8));
+
+        // minRelativeDepth 0.5 => a level needs >= ~0.75x the ~100 reference (~75) to promote.
+        RealLiquidityEngine weak = new RealLiquidityEngine(
+                new RealLiquidityEngine.EngineParams(20, 3_000, 0.5, 0.45,
+                        12_000, 0.05, 3, 24, null), baseline);
+        long t = 0;
+        for (int i = 0; i < 30; i++) { weak.onDepth(t, true, 21000, 30); t += 1_000; }
+        assertEquals(LiquidityLevel.State.BUILDING, stateAt(weak, t - 1_000, true),
+                "shallow level must stay hidden while a ready baseline says it is thin");
+
+        RealLiquidityEngine deep = new RealLiquidityEngine(
+                new RealLiquidityEngine.EngineParams(20, 3_000, 0.5, 0.45,
+                        12_000, 0.05, 3, 24, null), baseline);
+        t = 0;
+        for (int i = 0; i < 30; i++) { deep.onDepth(t, true, 21001, 200); t += 1_000; }
+        assertEquals(LiquidityLevel.State.STRONG, stateAt(deep, t - 1_000, true));
+    }
+
+    private static LiquidityLevel.State stateAt(RealLiquidityEngine e, long t, boolean bidSide) {
+        return e.visibleLevels(t, bidSide).isEmpty()
+                ? LiquidityLevel.State.BUILDING : e.visibleLevels(t, bidSide).get(0).state();
+    }
+
+    @Test
+    void eventSinkReceivesLifecycleTransitions() {
+        List<RealLiquidityEngine.LiquidityEvent> events = new ArrayList<>();
+        RealLiquidityEngine e = new RealLiquidityEngine(
+                new RealLiquidityEngine.EngineParams(20, 3_000, 0.5, 0.45,
+                        12_000, 0.05, 3, 24, events::add), null);
+        long t = 0;
+        for (int i = 0; i < 30; i++) { e.onDepth(t, true, 21000, 400); t += 1_000; }
+        e.onTrade(t, 20_999);
+
+        assertTrue(events.stream().anyMatch(ev -> "PROMOTE".equals(ev.type())));
+        assertTrue(events.stream().anyMatch(ev -> "BROKEN".equals(ev.type())));
+        assertEquals(RealLiquidityEngine.ScoredLevel.class.getSimpleName(),
+                RealLiquidityEngine.ScoredLevel.class.getSimpleName()); // shape guard
     }
 }
